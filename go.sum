@@ -1,0 +1,6 @@
+github.com/Automattic/go-search-replace v0.0.0-20250123122348-b7b61468a435 h1:9ASUY+l672Fmw5jrYfRWE1Le4sm+KzmCK6ItIpipNsM=
+github.com/Automattic/go-search-replace v0.0.0-20250123122348-b7b61468a435/go.mod h1:R1pI9mw8IOlBhnCtqv6ACeevzNwhBMxZyPFXTWJfdqg=
+github.com/klauspost/compress v1.17.11 h1:In6xLpyWOi1+C7tXUUWv2ot1QvBjxevKAaI6IXrJmUc=
+github.com/klauspost/compress v1.17.11/go.mod h1:pMDklpSncoRMuLFrf1W9Ss9KT+0rH90U12bZKk7uwG0=
+github.com/klauspost/pgzip v1.2.6 h1:8RXeL5crjEUFnR2/Sn6GJNWtSQ3Dk8pq4CL3jvdDyjU=
+github.com/klauspost/pgzip v1.2.6/go.mod h1:Ch1tH69qFZu15pkjo5kYi6mth2Zzwzt50oCQKQE9RUs=
