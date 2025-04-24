@@ -126,12 +126,12 @@ func main() {
 
 	isDataFile := false
 
-	bufferSize := 16 * 1024 * 1024 // 16 MB
+	bufferSize := 2 * 1024 * 1024 // 2 MB
 
 	r := bufio.NewReaderSize(reader, bufferSize)
 
 	for {
-		line, err := r.ReadSlice('\n')
+		line, err := readFullLine(r)
 
 		if err != nil {
 			if err == io.EOF {
@@ -210,6 +210,27 @@ func main() {
 	}
 
 	fmt.Printf("go-search-replace-mydumper: Finished successfuly. took %v\n", time.Since(start))
+}
+
+// readFullLine reads a complete line from the reader, handling lines larger than the buffer size
+// by joining fragments until the complete line is read
+func readFullLine(r *bufio.Reader) ([]byte, error) {
+	var lineBuffer bytes.Buffer
+	for {
+		fragment, isPrefix, err := r.ReadLine()
+
+		if err != nil {
+			return lineBuffer.Bytes(), err
+		}
+
+		lineBuffer.Write(fragment)
+
+		if !isPrefix {
+			lineBuffer.Write([]byte{'\n'})
+
+			return lineBuffer.Bytes(), nil
+		}
+	}
 }
 
 func validInput(in string, length int) bool {
