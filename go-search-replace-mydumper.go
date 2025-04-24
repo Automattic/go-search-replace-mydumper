@@ -224,7 +224,7 @@ func main() {
 		}
 	}
 
-	fmt.Printf("go-search-replace-mydumper: Finished successfuly. took %v\n", time.Since(start))
+	fmt.Printf("go-search-replace-mydumper: Finished successfully. took %v\n", time.Since(start))
 }
 
 // readFullLine reads a complete line from the reader, handling lines larger than the buffer size
