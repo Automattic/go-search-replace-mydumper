@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -23,15 +24,29 @@ const (
 )
 
 var (
-	input = regexp.MustCompile(inputRe)
-	bad   = regexp.MustCompile(badInputRe)
+	input       = regexp.MustCompile(inputRe)
+	bad         = regexp.MustCompile(badInputRe)
+	bufferSize  int
+	maxLineSize int64
 )
 
 func main() {
-	args := os.Args[1:]
+	// Define flags first
+	flag.IntVar(&bufferSize, "buffer-size", 2*1024*1024, "Size of read buffer in bytes")
+	flag.Int64Var(&maxLineSize, "max-line-size", 512*1024*1024, "Maximum allowed line size in bytes")
+
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s [options] <input file> <output dir> <from> <to> ...\n\nOptions:\n", os.Args[0])
+		flag.PrintDefaults()
+	}
+
+	flag.Parse()
+
+	args := flag.Args()
 
 	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "Usage: <input file> <output dir> <from> <to> ...")
+		flag.Usage()
+
 		os.Exit(1)
 		return
 	}
@@ -75,11 +90,12 @@ func main() {
 		}
 	}
 
-	args = os.Args[3:]
+	// Remove the first two arguments and leave only the replacements
+	rawReplacements := args[2:]
 
 	var replacements []*searchreplace.Replacement
 
-	if len(args)%2 > 0 {
+	if len(rawReplacements)%2 > 0 {
 		fmt.Fprintln(os.Stderr, "All replacements must have a <from> and <to> value")
 		os.Exit(1)
 		return
@@ -87,20 +103,20 @@ func main() {
 
 	fmt.Println("go-search-replace-mydumper: Processing file:", inputFilePath)
 	fmt.Println("go-search-replace-mydumper: Output directory:", outputDir)
-	fmt.Println("go-search-replace-mydumper: Replacements:", args)
+	fmt.Println("go-search-replace-mydumper: Replacements:", rawReplacements)
 
 	start := time.Now()
 
 	var from, to string
-	for i := 0; i < len(args)/2; i++ {
-		from = args[i*2]
+	for i := 0; i < len(rawReplacements)/2; i++ {
+		from = rawReplacements[i*2]
 		if !validInput(from, minInLength) {
 			fmt.Fprintln(os.Stderr, "Invalid <from> URL, minimum length is 4")
 			os.Exit(2)
 			return
 		}
 
-		to = args[(i*2)+1]
+		to = rawReplacements[(i*2)+1]
 		if !validInput(to, minOutLength) {
 			fmt.Fprintln(os.Stderr, "Invalid <to>, minimum length is 2")
 			os.Exit(3)
@@ -126,8 +142,6 @@ func main() {
 
 	isDataFile := false
 
-	bufferSize := 2 * 1024 * 1024 // 2 MB
-
 	r := bufio.NewReaderSize(reader, bufferSize)
 
 	for {
@@ -140,7 +154,8 @@ func main() {
 				}
 			} else {
 				fmt.Fprintln(os.Stderr, err.Error())
-				break
+
+				os.Exit(1)
 			}
 		}
 
@@ -216,11 +231,18 @@ func main() {
 // by joining fragments until the complete line is read
 func readFullLine(r *bufio.Reader) ([]byte, error) {
 	var lineBuffer bytes.Buffer
+	var currentSize int64
+
 	for {
 		fragment, isPrefix, err := r.ReadLine()
 
 		if err != nil {
 			return lineBuffer.Bytes(), err
+		}
+
+		currentSize += int64(len(fragment))
+		if currentSize > maxLineSize {
+			return nil, fmt.Errorf("line exceeds maximum size of %d MB", maxLineSize/(1024*1024))
 		}
 
 		lineBuffer.Write(fragment)
