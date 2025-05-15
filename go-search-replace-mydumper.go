@@ -129,6 +129,23 @@ func main() {
 		})
 	}
 
+	hasReplacements := len(replacements) > 0
+
+	fromEntries := make([]string, len(replacements))
+	for i, replacement := range replacements {
+		fromEntries[i] = string(replacement.From)
+	}
+
+	fromEntriesContainsPattern := "(?:"
+	for i, from := range fromEntries {
+		if i > 0 {
+			fromEntriesContainsPattern += "|"
+		}
+		fromEntriesContainsPattern += regexp.QuoteMeta(from)
+	}
+	fromEntriesContainsPattern += ")"
+	fromEntriesContainsRegex := regexp.MustCompile(fromEntriesContainsPattern)
+
 	pattern := `^--\s+([\S]+)\s+\d+`
 	filenameRegex := regexp.MustCompile(pattern)
 
@@ -144,8 +161,18 @@ func main() {
 
 	r := bufio.NewReaderSize(reader, bufferSize)
 
+	fileInfo, err := inputFile.Stat()
+	if err != nil {
+		panic(err)
+	}
+
+	totalFileSize := fileInfo.Size()
+	bytesProcessed := int64(0)
+	lastPrintedPercentage := 0
+
 	for {
 		line, err := readFullLine(r)
+		bytesProcessed += int64(len(line))
 
 		if err != nil {
 			if err == io.EOF {
@@ -157,6 +184,14 @@ func main() {
 
 				os.Exit(1)
 			}
+		}
+
+		progress := float64(bytesProcessed) / float64(totalFileSize) * 100
+		currentPercentage := int(progress/10) * 10
+
+		if currentPercentage > lastPrintedPercentage {
+			fmt.Printf("go-search-replace-mydumper: Processing: %d%% complete\n", currentPercentage)
+			lastPrintedPercentage = currentPercentage
 		}
 
 		if bytes.HasPrefix(line, fileLinePrefix) {
@@ -191,8 +226,12 @@ func main() {
 		} else {
 			if keep && writer != nil {
 				if isDataFile {
-					replaced := searchreplace.FixLine(&line, replacements)
-					_, err = writer.Write(*replaced)
+					if hasReplacements && fromEntriesContainsRegex.Match(line) {
+						replaced := searchreplace.FixLine(&line, replacements)
+						_, err = writer.Write(*replaced)
+					} else {
+						_, err = writer.Write(line)
+					}
 					if err != nil {
 						fmt.Printf("Error writing to buffer: %v\n", err)
 						return
