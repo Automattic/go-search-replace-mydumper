@@ -161,18 +161,8 @@ func main() {
 
 	r := bufio.NewReaderSize(reader, bufferSize)
 
-	fileInfo, err := inputFile.Stat()
-	if err != nil {
-		panic(err)
-	}
-
-	totalFileSize := fileInfo.Size()
-	bytesProcessed := int64(0)
-	lastPrintedPercentage := 0
-
 	for {
 		line, err := readFullLine(r)
-		bytesProcessed += int64(len(line))
 
 		if err != nil {
 			if err == io.EOF {
@@ -184,14 +174,6 @@ func main() {
 
 				os.Exit(1)
 			}
-		}
-
-		progress := float64(bytesProcessed) / float64(totalFileSize) * 100
-		currentPercentage := int(progress/10) * 10
-
-		if currentPercentage > lastPrintedPercentage {
-			fmt.Printf("go-search-replace-mydumper: Processing: %d%% complete\n", currentPercentage)
-			lastPrintedPercentage = currentPercentage
 		}
 
 		if bytes.HasPrefix(line, fileLinePrefix) {
