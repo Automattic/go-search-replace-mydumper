@@ -131,20 +131,7 @@ func main() {
 
 	hasReplacements := len(replacements) > 0
 
-	fromEntries := make([]string, len(replacements))
-	for i, replacement := range replacements {
-		fromEntries[i] = string(replacement.From)
-	}
-
-	fromEntriesContainsPattern := "(?:"
-	for i, from := range fromEntries {
-		if i > 0 {
-			fromEntriesContainsPattern += "|"
-		}
-		fromEntriesContainsPattern += regexp.QuoteMeta(from)
-	}
-	fromEntriesContainsPattern += ")"
-	fromEntriesContainsRegex := regexp.MustCompile(fromEntriesContainsPattern)
+	fromEntriesContainsRegex := fromEntriesContainsRegex(replacements)
 
 	pattern := `^--\s+([\S]+)\s+\d+`
 	filenameRegex := regexp.MustCompile(pattern)
@@ -274,6 +261,43 @@ func readFullLine(r *bufio.Reader) ([]byte, error) {
 			return lineBuffer.Bytes(), nil
 		}
 	}
+}
+
+func fromEntriesContainsRegex(replacements []*searchreplace.Replacement) *regexp.Regexp {
+	allFromStartWithSlash := true
+
+	fromEntries := make([]string, len(replacements))
+	for i, replacement := range replacements {
+		fromEntries[i] = string(replacement.From)
+		if !bytes.HasPrefix(replacement.To, []byte("//")) {
+			allFromStartWithSlash = false
+		}
+	}
+
+	fromEntriesContainsPattern := ""
+
+	// If all replacements start with a double-slash (which is a common scenario), we
+	// can optimize the regex by adding the double-slash at the beginning of the regex.
+	// Sort of Aho–Corasick algorithm.
+	if allFromStartWithSlash {
+		fromEntriesContainsPattern += regexp.QuoteMeta("//")
+	}
+
+	fromEntriesContainsPattern += "(?:"
+	for i, from := range fromEntries {
+		if i > 0 {
+			fromEntriesContainsPattern += "|"
+		}
+
+		if allFromStartWithSlash {
+			from = from[2:]
+		}
+
+		fromEntriesContainsPattern += regexp.QuoteMeta(from)
+	}
+	fromEntriesContainsPattern += ")"
+
+	return regexp.MustCompile(fromEntriesContainsPattern)
 }
 
 func validInput(in string, length int) bool {
