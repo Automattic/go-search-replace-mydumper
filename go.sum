@@ -1,5 +1,3 @@
-github.com/Automattic/go-search-replace v0.0.0-20250123122348-b7b61468a435 h1:9ASUY+l672Fmw5jrYfRWE1Le4sm+KzmCK6ItIpipNsM=
-github.com/Automattic/go-search-replace v0.0.0-20250123122348-b7b61468a435/go.mod h1:R1pI9mw8IOlBhnCtqv6ACeevzNwhBMxZyPFXTWJfdqg=
 github.com/Automattic/go-search-replace v0.0.0-20250619025147-865525ecd0df h1:fTWM88EquHd24aZqY2Fa9/Z/ZyZC79H3pGJ+Vv0S714=
 github.com/Automattic/go-search-replace v0.0.0-20250619025147-865525ecd0df/go.mod h1:R1pI9mw8IOlBhnCtqv6ACeevzNwhBMxZyPFXTWJfdqg=
 github.com/klauspost/compress v1.17.11 h1:In6xLpyWOi1+C7tXUUWv2ot1QvBjxevKAaI6IXrJmUc=
