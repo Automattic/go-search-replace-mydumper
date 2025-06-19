@@ -5,7 +5,7 @@ go 1.23.2
 toolchain go1.23.5
 
 require (
-	github.com/Automattic/go-search-replace v0.0.0-20250123122348-b7b61468a435
+	github.com/Automattic/go-search-replace v0.0.0-20250619025147-865525ecd0df
 	github.com/klauspost/pgzip v1.2.6
 )
 
