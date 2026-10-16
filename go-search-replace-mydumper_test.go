@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -218,5 +220,134 @@ func TestFromEntriesContainsRegexGuardsAgainstMetacharacterFalsePositives(t *tes
 	}
 	if re.MatchString("prefix fooXbar/baz suffix") {
 		t.Fatalf("regex should not match near-miss dotted path")
+	}
+}
+
+func useTestSizes(t *testing.T) {
+	t.Helper()
+
+	oldBufferSize, oldMax := bufferSize, maxLineSize
+	bufferSize, maxLineSize = 4096, 1024*1024
+	t.Cleanup(func() {
+		bufferSize, maxLineSize = oldBufferSize, oldMax
+	})
+}
+
+func runSplitStream(t *testing.T, stream string, replacements []*searchreplace.Replacement) string {
+	t.Helper()
+
+	useTestSizes(t)
+
+	outputDir := t.TempDir()
+	if err := splitStream(strings.NewReader(stream), outputDir, replacements); err != nil {
+		t.Fatalf("splitStream() unexpected error: %v", err)
+	}
+
+	return outputDir
+}
+
+func readOutputFile(t *testing.T, outputDir, name string) string {
+	t.Helper()
+
+	content, err := os.ReadFile(filepath.Join(outputDir, name))
+	if err != nil {
+		t.Fatalf("reading %s: %v", name, err)
+	}
+
+	return string(content)
+}
+
+func listOutputFiles(t *testing.T, outputDir string) []string {
+	t.Helper()
+
+	entries, err := os.ReadDir(outputDir)
+	if err != nil {
+		t.Fatalf("reading output dir: %v", err)
+	}
+
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+
+	return names
+}
+
+const testHeader = "# Started dump at: 2026-10-16 15:23:56\n[config]\nquote-character = BACKTICK\n\n[myloader_session_variables]\nSQL_MODE='NO_AUTO_VALUE_ON_ZERO' /*!40101\n"
+
+func TestSplitStreamMergesMetadataHeaderIntoMetadata(t *testing.T) {
+	stream := "-- metadata.header 120\n" + testHeader +
+		"-- db-schema-create.sql 40\nCREATE DATABASE `db` /* //old.example */;\n" +
+		"-- db.wp_posts-schema.sql 40\nCREATE TABLE `wp_posts` (`guid` varchar(255));\n" +
+		"-- db.wp_posts.00000.sql 60\nINSERT INTO `wp_posts` VALUES ('https://old.example/1');\n" +
+		"-- metadata 60\n[`db`.`wp_posts`]\nreal_table_name=wp_posts\nrows = 1\n\n[config]\nnum-sequences = 0\n"
+
+	replacements := []*searchreplace.Replacement{
+		{From: []byte("//old.example"), To: []byte("//new.example")},
+	}
+
+	outputDir := runSplitStream(t, stream, replacements)
+
+	wantFiles := []string{"db-schema-create.sql", "db.wp_posts-schema.sql", "db.wp_posts.00000.sql", "metadata"}
+	if got := listOutputFiles(t, outputDir); strings.Join(got, ",") != strings.Join(wantFiles, ",") {
+		t.Fatalf("output files = %v, want %v", got, wantFiles)
+	}
+
+	wantMetadata := testHeader + "[`db`.`wp_posts`]\nreal_table_name=wp_posts\nrows = 1\n\n[config]\nnum-sequences = 0\n"
+	if got := readOutputFile(t, outputDir, "metadata"); got != wantMetadata {
+		t.Fatalf("metadata mismatch, got %q want %q", got, wantMetadata)
+	}
+
+	if got, want := readOutputFile(t, outputDir, "db.wp_posts.00000.sql"), "INSERT INTO `wp_posts` VALUES ('https://new.example/1');\n"; got != want {
+		t.Fatalf("data file mismatch, got %q want %q", got, want)
+	}
+
+	// Replacements only apply to data files.
+	if got, want := readOutputFile(t, outputDir, "db-schema-create.sql"), "CREATE DATABASE `db` /* //old.example */;\n"; got != want {
+		t.Fatalf("schema file mismatch, got %q want %q", got, want)
+	}
+}
+
+func TestSplitStreamKeepsMetadataHeaderWithoutMetadata(t *testing.T) {
+	stream := "-- metadata.header 120\n" + testHeader +
+		"-- db.wp_posts.00000.sql 30\nINSERT INTO `wp_posts` VALUES (1);\n"
+
+	outputDir := runSplitStream(t, stream, nil)
+
+	if got := readOutputFile(t, outputDir, "metadata.header"); got != testHeader {
+		t.Fatalf("metadata.header mismatch, got %q want %q", got, testHeader)
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, "metadata")); !os.IsNotExist(err) {
+		t.Fatalf("metadata should not be created, stat error: %v", err)
+	}
+}
+
+func TestSplitStreamTruncatesExistingFiles(t *testing.T) {
+	useTestSizes(t)
+
+	outputDir := t.TempDir()
+	stale := filepath.Join(outputDir, "db.wp_posts.00000.sql")
+	if err := os.WriteFile(stale, []byte(strings.Repeat("stale content ", 10)), 0644); err != nil {
+		t.Fatalf("writing stale file: %v", err)
+	}
+
+	stream := "-- db.wp_posts.00000.sql 30\nINSERT INTO `wp_posts` VALUES (1);\n"
+	if err := splitStream(strings.NewReader(stream), outputDir, nil); err != nil {
+		t.Fatalf("splitStream() unexpected error: %v", err)
+	}
+
+	if got, want := readOutputFile(t, outputDir, "db.wp_posts.00000.sql"), "INSERT INTO `wp_posts` VALUES (1);\n"; got != want {
+		t.Fatalf("data file mismatch, got %q want %q", got, want)
+	}
+}
+
+func TestSplitStreamReturnsErrorWhenOutputDirIsMissing(t *testing.T) {
+	useTestSizes(t)
+
+	missingDir := filepath.Join(t.TempDir(), "missing")
+
+	err := splitStream(strings.NewReader("-- db.wp_posts.00000.sql 30\nINSERT INTO `wp_posts` VALUES (1);\n"), missingDir, nil)
+	if err == nil || !strings.Contains(err.Error(), "error opening file") {
+		t.Fatalf("splitStream() error = %v, want an error opening file", err)
 	}
 }

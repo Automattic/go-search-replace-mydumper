@@ -23,11 +23,18 @@ const (
 	minOutLength = 2
 )
 
+const (
+	metadataFilename       = "metadata"
+	metadataHeaderFilename = "metadata.header"
+)
+
 var (
-	input       = regexp.MustCompile(inputRe)
-	bad         = regexp.MustCompile(badInputRe)
-	bufferSize  int
-	maxLineSize int64
+	dataFileRegex = regexp.MustCompile(`\d+.sql$`)
+	filenameRegex = regexp.MustCompile(`^--\s+([\S]+)\s+\d+`)
+	input         = regexp.MustCompile(inputRe)
+	bad           = regexp.MustCompile(badInputRe)
+	bufferSize    int
+	maxLineSize   int64
 )
 
 func main() {
@@ -78,8 +85,6 @@ func main() {
 		reader = inputFile
 	}
 
-	dataFileRegex := regexp.MustCompile(`\d+.sql$`)
-
 	outputDir := args[1]
 
 	if _, err := os.Stat(outputDir); os.IsNotExist(err) {
@@ -129,22 +134,59 @@ func main() {
 		})
 	}
 
-	hasReplacements := len(replacements) > 0
+	if err := splitStream(reader, outputDir, replacements); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+		return
+	}
 
+	fmt.Printf("go-search-replace-mydumper: Finished successfully. took %v\n", time.Since(start))
+}
+
+// splitStream splits a mydumper stream into one file per section in outputDir, applying the
+// replacements to data files.
+//
+// mydumper streams start with a metadata.header section and end with a metadata section. myloader
+// handles both files as global metadata and, when it finds both in a directory, can release its
+// metadata lock twice and hang or crash. The header is therefore written at the top of the
+// metadata file instead of to a file of its own (or on its own, if the stream has no metadata).
+func splitStream(reader io.Reader, outputDir string, replacements []*searchreplace.Replacement) error {
+	hasReplacements := len(replacements) > 0
 	fromEntriesContainsRegex := fromEntriesContainsRegex(replacements)
 
-	pattern := `^--\s+([\S]+)\s+\d+`
-	filenameRegex := regexp.MustCompile(pattern)
-
-	keep := true
-	var newFilename string
+	var header bytes.Buffer
+	headerMerged := false
 
 	var output *os.File
 	var writer *bufio.Writer
+	isDataFile := false
+
+	closeCurrent := func() error {
+		if writer != nil {
+			if err := writer.Flush(); err != nil {
+				return fmt.Errorf("error flushing buffer: %w", err)
+			}
+		}
+		if output != nil {
+			if err := output.Close(); err != nil {
+				return fmt.Errorf("error closing file: %w", err)
+			}
+		}
+		output, writer = nil, nil
+		return nil
+	}
+
+	openFile := func(filename string) error {
+		var err error
+		output, err = os.OpenFile(filepath.Join(outputDir, filename), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		if err != nil {
+			return fmt.Errorf("error opening file: %w", err)
+		}
+		writer = bufio.NewWriterSize(output, bufferSize)
+		return nil
+	}
 
 	fileLinePrefix := []byte("-- ")
-
-	isDataFile := false
 
 	r := bufio.NewReaderSize(reader, bufferSize)
 
@@ -152,87 +194,67 @@ func main() {
 		line, err := readFullLine(r)
 
 		if err != nil {
-			if err == io.EOF {
-				if 0 == len(line) {
-					break
-				}
-			} else {
-				fmt.Fprintln(os.Stderr, err.Error())
-
-				os.Exit(1)
+			if err != io.EOF {
+				return err
+			}
+			if len(line) == 0 {
+				break
 			}
 		}
 
 		if bytes.HasPrefix(line, fileLinePrefix) {
 			if matches := filenameRegex.FindSubmatch(line); matches != nil {
-				if output != nil {
-					if err = writer.Flush(); err != nil {
-						fmt.Printf("Error flushing buffer: %v\n", err)
-						os.Exit(1)
-						return
-					}
-					if err = output.Close(); err != nil {
-						fmt.Printf("Error closing file: %v\n", err)
-						os.Exit(1)
-						return
-					}
+				if err := closeCurrent(); err != nil {
+					return err
 				}
 
-				newFilename = string(matches[1])
+				newFilename := string(matches[1])
 				isDataFile = dataFileRegex.MatchString(newFilename)
 
-				outputFile := filepath.Join(outputDir, newFilename)
-
-				output, err = os.OpenFile(outputFile, os.O_CREATE|os.O_WRONLY, 0644)
-				if err != nil {
-					fmt.Printf("Error opening file: %v\n", err)
-					return
-				}
-				writer = bufio.NewWriterSize(output, bufferSize)
-
-				keep = true
-			}
-		} else {
-			if keep && writer != nil {
-				if isDataFile {
-					if hasReplacements && fromEntriesContainsRegex.Match(line) {
-						replaced := searchreplace.FixLine(&line, replacements)
-						_, err = writer.Write(*replaced)
-					} else {
-						_, err = writer.Write(line)
+				switch newFilename {
+				case metadataHeaderFilename:
+					writer = bufio.NewWriter(&header)
+				case metadataFilename:
+					if err := openFile(newFilename); err != nil {
+						return err
 					}
-					if err != nil {
-						fmt.Printf("Error writing to buffer: %v\n", err)
-						return
+					if _, err := writer.Write(header.Bytes()); err != nil {
+						return fmt.Errorf("error writing to buffer: %w", err)
 					}
-				} else {
-					_, err = writer.Write(line)
-					if err != nil {
-						fmt.Printf("Error writing to buffer: %v\n", err)
-						return
+					headerMerged = true
+				default:
+					if err := openFile(newFilename); err != nil {
+						return err
 					}
 				}
 			}
+
+			continue
+		}
+
+		if writer == nil {
+			continue
+		}
+
+		if isDataFile && hasReplacements && fromEntriesContainsRegex.Match(line) {
+			line = *searchreplace.FixLine(&line, replacements)
+		}
+		if _, err := writer.Write(line); err != nil {
+			return fmt.Errorf("error writing to buffer: %w", err)
 		}
 	}
 
-	if writer != nil {
-		if err = writer.Flush(); err != nil {
-			fmt.Printf("Error flushing buffer: %v\n", err)
-			os.Exit(1)
-			return
+	if err := closeCurrent(); err != nil {
+		return err
+	}
+
+	if header.Len() > 0 && !headerMerged {
+		if err := os.WriteFile(filepath.Join(outputDir, metadataHeaderFilename), header.Bytes(), 0644); err != nil {
+			return fmt.Errorf("error writing %s: %w", metadataHeaderFilename, err)
 		}
 	}
 
-	if output != nil {
-		if err = output.Close(); err != nil {
-			fmt.Printf("Error closing file: %v\n", err)
-			os.Exit(1)
-			return
-		}
-	}
-
-	fmt.Printf("go-search-replace-mydumper: Finished successfully. took %v\n", time.Since(start))
+	return nil
 }
 
 // readFullLine reads a complete line from the reader, handling lines larger than the buffer size
