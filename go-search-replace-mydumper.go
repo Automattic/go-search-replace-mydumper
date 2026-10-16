@@ -149,13 +149,14 @@ func main() {
 // mydumper streams start with a metadata.header section and end with a metadata section. myloader
 // handles both files as global metadata and, when it finds both in a directory, can release its
 // metadata lock twice and hang or crash. The header is therefore written at the top of the
-// metadata file instead of to a file of its own (or on its own, if the stream has no metadata).
+// metadata file instead of to a file of its own. It is still written on its own when the stream
+// has no metadata section, or has it before the header.
 func splitStream(reader io.Reader, outputDir string, replacements []*searchreplace.Replacement) error {
 	hasReplacements := len(replacements) > 0
 	fromEntriesContainsRegex := fromEntriesContainsRegex(replacements)
 
 	var header bytes.Buffer
-	headerMerged := false
+	sawHeader, headerMerged := false, false
 
 	var output *os.File
 	var writer *bufio.Writer
@@ -213,15 +214,20 @@ func splitStream(reader io.Reader, outputDir string, replacements []*searchrepla
 
 				switch newFilename {
 				case metadataHeaderFilename:
+					sawHeader = true
 					writer = bufio.NewWriter(&header)
 				case metadataFilename:
 					if err := openFile(newFilename); err != nil {
 						return err
 					}
-					if _, err := writer.Write(header.Bytes()); err != nil {
-						return fmt.Errorf("error writing to buffer: %w", err)
+					// Only a header seen earlier in the stream is complete at this point; one that
+					// comes later is written on its own at the end.
+					if sawHeader {
+						if _, err := writer.Write(header.Bytes()); err != nil {
+							return fmt.Errorf("error writing to buffer: %w", err)
+						}
+						headerMerged = true
 					}
-					headerMerged = true
 				default:
 					if err := openFile(newFilename); err != nil {
 						return err
@@ -248,7 +254,7 @@ func splitStream(reader io.Reader, outputDir string, replacements []*searchrepla
 		return err
 	}
 
-	if header.Len() > 0 && !headerMerged {
+	if sawHeader && !headerMerged {
 		if err := os.WriteFile(filepath.Join(outputDir, metadataHeaderFilename), header.Bytes(), 0644); err != nil {
 			return fmt.Errorf("error writing %s: %w", metadataHeaderFilename, err)
 		}

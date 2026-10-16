@@ -351,3 +351,59 @@ func TestSplitStreamReturnsErrorWhenOutputDirIsMissing(t *testing.T) {
 		t.Fatalf("splitStream() error = %v, want an error opening file", err)
 	}
 }
+
+func TestSplitStreamKeepsMetadataHeaderThatComesAfterMetadata(t *testing.T) {
+	metadata := "[`db`.`wp_posts`]\nreal_table_name=wp_posts\n"
+	stream := "-- metadata 40\n" + metadata + "-- metadata.header 120\n" + testHeader
+
+	outputDir := runSplitStream(t, stream, nil)
+
+	if got := readOutputFile(t, outputDir, "metadata"); got != metadata {
+		t.Fatalf("metadata mismatch, got %q want %q", got, metadata)
+	}
+	if got := readOutputFile(t, outputDir, "metadata.header"); got != testHeader {
+		t.Fatalf("metadata.header mismatch, got %q want %q", got, testHeader)
+	}
+}
+
+func TestSplitStreamKeepsEmptyMetadataHeaderWithoutMetadata(t *testing.T) {
+	outputDir := runSplitStream(t, "-- metadata.header 0\n", nil)
+
+	if got := readOutputFile(t, outputDir, "metadata.header"); got != "" {
+		t.Fatalf("metadata.header should be empty, got %q", got)
+	}
+}
+
+func TestSplitStreamDropsNonMarkerCommentLines(t *testing.T) {
+	stream := "-- db.wp_posts.00000.sql 60\n" +
+		"-- not a file marker\n" +
+		"INSERT INTO `wp_posts` VALUES (1);\n" +
+		"-- metadata.header 120\n" + testHeader +
+		"-- another comment\n" +
+		"-- metadata 20\n[config]\nnum-sequences = 0\n"
+
+	outputDir := runSplitStream(t, stream, nil)
+
+	if got, want := readOutputFile(t, outputDir, "db.wp_posts.00000.sql"), "INSERT INTO `wp_posts` VALUES (1);\n"; got != want {
+		t.Fatalf("data file mismatch, got %q want %q", got, want)
+	}
+	if got, want := readOutputFile(t, outputDir, "metadata"), testHeader+"[config]\nnum-sequences = 0\n"; got != want {
+		t.Fatalf("metadata mismatch, got %q want %q", got, want)
+	}
+}
+
+func TestSplitStreamPassesPartialMetadataThrough(t *testing.T) {
+	partial := "[`db`.`wp_posts`]\nreal_table_name=wp_posts\nrows = 1\n"
+	stream := "-- metadata.header 120\n" + testHeader +
+		"-- metadata.partial.0 50\n" + partial +
+		"-- metadata 20\n[config]\nnum-sequences = 0\n"
+
+	outputDir := runSplitStream(t, stream, nil)
+
+	if got := readOutputFile(t, outputDir, "metadata.partial.0"); got != partial {
+		t.Fatalf("metadata.partial.0 mismatch, got %q want %q", got, partial)
+	}
+	if got, want := readOutputFile(t, outputDir, "metadata"), testHeader+"[config]\nnum-sequences = 0\n"; got != want {
+		t.Fatalf("metadata mismatch, got %q want %q", got, want)
+	}
+}
