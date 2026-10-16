@@ -269,7 +269,7 @@ func fromEntriesContainsRegex(replacements []*searchreplace.Replacement) *regexp
 	fromEntries := make([]string, len(replacements))
 	for i, replacement := range replacements {
 		fromEntries[i] = string(replacement.From)
-		if !bytes.HasPrefix(replacement.To, []byte("//")) {
+		if !bytes.HasPrefix(replacement.From, []byte("//")) {
 			allFromStartWithSlash = false
 		}
 	}
